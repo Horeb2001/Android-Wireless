@@ -1,0 +1,22 @@
+# Android generated files
+*.iml
+.gradle/
+local.properties
+.idea/
+.DS_Store
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# APKs and release artifacts
+*.apk
+*.aab
+*.ap_
+
+# ProGuard map files
+*.map
+
+# Test results
+test-results/
+lint-results/

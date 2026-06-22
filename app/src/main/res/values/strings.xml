@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ShareDrop</string>
+    <string name="received_files_title">Received Files</string>
+
+    <!-- Main screen -->
+    <string name="btn_discover">Discover Nearby Devices</string>
+    <string name="btn_rescan">Rescan</string>
+    <string name="btn_disconnect">Disconnect</string>
+    <string name="btn_select_file">Select File to Send</string>
+    <string name="btn_send">Send File</string>
+    <string name="btn_view_received">View Received Files</string>
+    <string name="status_wifi_direct_on">Wi-Fi Direct: ON</string>
+    <string name="status_wifi_direct_off">Wi-Fi Direct: OFF — enable Wi-Fi</string>
+    <string name="status_not_connected">Not connected — discover devices first</string>
+    <string name="label_nearby_devices">Nearby Devices</string>
+    <string name="label_file_transfer">File Transfer</string>
+    <string name="no_file_selected">No file selected</string>
+    <string name="no_devices_found">No devices found. Ensure both devices have Wi-Fi ON.</string>
+
+    <!-- Consent dialog -->
+    <string name="consent_title">Incoming File Transfer</string>
+    <string name="consent_accept">Accept</string>
+    <string name="consent_decline">Decline</string>
+
+    <!-- Received files screen -->
+    <string name="no_received_files">No received files yet.\nFiles will appear here after a transfer.</string>
+    <string name="open_file">Open</string>
+</resources>
