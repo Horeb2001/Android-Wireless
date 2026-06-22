@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Declares which filesystem paths FileProvider is allowed to expose as content:// URIs.
+    <external-files-path> root = Context.getExternalFilesDir(null)
+    path "Downloads/ShareDrop/" maps to getExternalFilesDir(DIRECTORY_DOWNLOADS)/ShareDrop/
+-->
+<paths>
+    <external-files-path
+        name="sharedrop_downloads"
+        path="Downloads/ShareDrop/" />
+    <!-- Fallback: allow entire external files dir so nested sub-folders always resolve -->
+    <external-files-path
+        name="external_files"
+        path="." />
+</paths>
