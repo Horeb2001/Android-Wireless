@@ -9,6 +9,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
+import android.location.LocationManager;
 import android.net.Uri;
 import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
@@ -18,6 +19,7 @@ import android.net.wifi.p2p.WifiP2pManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
@@ -262,13 +264,30 @@ public class MainActivity extends AppCompatActivity
     public void onRequestPermissionsResult(int code, @NonNull String[] perms,
                                            @NonNull int[] results) {
         super.onRequestPermissionsResult(code, perms, results);
-        if (code == PERM) {
-            for (int r : results) {
-                if (r != PackageManager.PERMISSION_GRANTED) {
-                    toast("Required permissions denied — discovery may not work");
-                    return;
-                }
-            }
+        if (code != PERM) return;
+
+        boolean allGranted = true;
+        for (int r : results) {
+            if (r != PackageManager.PERMISSION_GRANTED) { allGranted = false; break; }
+        }
+
+        if (!allGranted) {
+            // Guide the user to App Settings so they can grant the permission manually
+            new AlertDialog.Builder(this)
+                    .setTitle("Permission Required")
+                    .setMessage(
+                        "Wi-Fi Direct peer discovery needs the "
+                        + (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                                ? "Nearby Wi-Fi Devices" : "Location")
+                        + " permission.\n\nGo to App Settings → Permissions and grant it.")
+                    .setPositiveButton("App Settings", (d, w) -> {
+                        Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.parse("package:" + getPackageName()));
+                        startActivity(i);
+                    })
+                    .setNegativeButton("Cancel", null)
+                    .show();
+            tvStatus.setText("Permission denied — grant it in App Settings then restart");
         }
     }
 
@@ -276,18 +295,91 @@ public class MainActivity extends AppCompatActivity
     // Wi-Fi Direct operations
     // ═════════════════════════════════════════════════════════════════════
 
-    @SuppressLint("MissingPermission")
+    /**
+     * Entry point for peer discovery.  Runs three pre-flight checks before
+     * touching the WifiP2pManager API:
+     *  1. Runtime permission (ACCESS_FINE_LOCATION on API<33, NEARBY_WIFI_DEVICES on API≥33)
+     *  2. System Location Services toggle ON (required by Android on API 23–32)
+     *  3. Clear any stale P2P state (stop old scan → cancel pending connect → remove old group)
+     *     so the framework doesn't return BUSY or ERROR from a dirty previous session.
+     *
+     * These are the three most common causes of "Discovery failed: Internal error".
+     */
     private void discoverPeers() {
         if (manager == null) return;
+
+        // ── Check 1: runtime permission ───────────────────────────────────
+        if (!hasRequiredPermissions()) {
+            requestPermissions();
+            tvStatus.setText("Permission required — grant it and tap Discover again");
+            return;
+        }
+
+        // ── Check 2: location services (Android 6–12 only) ───────────────
+        // On Android 13+ NEARBY_WIFI_DEVICES does not need location to be on.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU && !isLocationEnabled()) {
+            tvStatus.setText("Location Services must be ON for Wi-Fi Direct discovery");
+            new AlertDialog.Builder(this)
+                    .setTitle("Location Services Required")
+                    .setMessage(
+                        "Android " + Build.VERSION.RELEASE + " requires Location Services "
+                        + "to be turned ON for Wi-Fi Direct peer discovery.\n\n"
+                        + "Go to Settings → Location → toggle ON, then come back and tap Discover.")
+                    .setPositiveButton("Open Settings", (d, w) ->
+                            startActivity(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)))
+                    .setNegativeButton("Cancel", null)
+                    .show();
+            return;
+        }
+
+        // ── Check 3: flush stale P2P state ────────────────────────────────
+        // stopPeerDiscovery → cancelConnect → removeGroup → then actually discover.
+        // Each step ignores failures (there may simply be nothing to clear).
+        tvStatus.setText("Preparing discovery…");
+        manager.stopPeerDiscovery(channel, new WifiP2pManager.ActionListener() {
+            @Override public void onSuccess() { clearAndDiscover_step2(); }
+            @Override public void onFailure(int r) { clearAndDiscover_step2(); }
+        });
+    }
+
+    @SuppressLint("MissingPermission")
+    private void clearAndDiscover_step2() {
+        manager.cancelConnect(channel, new WifiP2pManager.ActionListener() {
+            @Override public void onSuccess() { clearAndDiscover_step3(); }
+            @Override public void onFailure(int r) { clearAndDiscover_step3(); }
+        });
+    }
+
+    private void clearAndDiscover_step3() {
+        manager.removeGroup(channel, new WifiP2pManager.ActionListener() {
+            @Override public void onSuccess() { startDiscovery(); }
+            @Override public void onFailure(int r) { startDiscovery(); }
+        });
+    }
+
+    @SuppressLint("MissingPermission")
+    private void startDiscovery() {
         tvStatus.setText("Discovering peers…");
         manager.discoverPeers(channel, new WifiP2pManager.ActionListener() {
             @Override public void onSuccess() {
                 tvStatus.setText("Discovery started — looking for nearby devices…");
             }
             @Override public void onFailure(int reason) {
-                String msg = failureReason(reason);
-                tvStatus.setText("Discovery failed: " + msg);
-                toast("Discovery failed: " + msg + " (ensure Wi-Fi is ON)");
+                // Build a diagnostic hint so the user knows what to fix
+                String hint;
+                if (reason == WifiP2pManager.ERROR) {
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU && !isLocationEnabled()) {
+                        hint = "Location Services are OFF — enable them in Settings → Location";
+                    } else if (!hasRequiredPermissions()) {
+                        hint = "Permission denied — grant Location/Nearby-Devices in App Settings";
+                    } else {
+                        hint = "Internal error — toggle Wi-Fi OFF then ON in Settings and try again";
+                    }
+                } else {
+                    hint = failureReason(reason);
+                }
+                tvStatus.setText("Discovery failed: " + hint);
+                toast(hint);
             }
         });
     }
@@ -605,12 +697,50 @@ public class MainActivity extends AppCompatActivity
     // Utility
     // ═════════════════════════════════════════════════════════════════════
 
+    /**
+     * Returns true if the permission required for Wi-Fi Direct discovery is granted.
+     * On Android 13+ this is NEARBY_WIFI_DEVICES; on Android 6–12 it is ACCESS_FINE_LOCATION.
+     */
+    private boolean hasRequiredPermissions() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            return ContextCompat.checkSelfPermission(this, Manifest.permission.NEARBY_WIFI_DEVICES)
+                    == PackageManager.PERMISSION_GRANTED;
+        } else {
+            return ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED;
+        }
+    }
+
+    /**
+     * Returns true if the device's Location Services toggle is ON.
+     * Required by Android on API 23–32 before WifiP2pManager.discoverPeers() will work,
+     * even when the ACCESS_FINE_LOCATION permission has been granted.
+     * On Android 13+ this check is not needed (NEARBY_WIFI_DEVICES covers scanning).
+     */
+    private boolean isLocationEnabled() {
+        LocationManager lm = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+        if (lm == null) return false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            // API 28+: single isLocationEnabled() method
+            return lm.isLocationEnabled();
+        } else {
+            // API 23–27: check the global LOCATION_MODE setting
+            try {
+                int mode = Settings.Secure.getInt(
+                        getContentResolver(), Settings.Secure.LOCATION_MODE);
+                return mode != Settings.Secure.LOCATION_MODE_OFF;
+            } catch (Settings.SettingNotFoundException e) {
+                return false;
+            }
+        }
+    }
+
     private String failureReason(int code) {
         switch (code) {
-            case WifiP2pManager.P2P_UNSUPPORTED: return "P2P not supported";
-            case WifiP2pManager.BUSY:            return "System busy — try again";
-            case WifiP2pManager.ERROR:           return "Internal error";
-            default:                             return "Unknown (" + code + ")";
+            case WifiP2pManager.P2P_UNSUPPORTED: return "P2P not supported on this device";
+            case WifiP2pManager.BUSY:            return "System busy — wait a moment and try again";
+            case WifiP2pManager.ERROR:           return "Internal error — toggle Wi-Fi off/on";
+            default:                             return "Unknown error (" + code + ")";
         }
     }
 
